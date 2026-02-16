@@ -1,4 +1,4 @@
-# Team XX - Crypto Trading Strategy
+# Team 8 - Crypto Trading Strategy
 
 ## 👥 Members
 - Veronika Glukhova - 251
