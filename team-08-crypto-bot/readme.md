@@ -1,10 +1,10 @@
 # Team XX - Crypto Trading Strategy
 
 ## 👥 Members
-- [Name] - [Student ID]
-- [Name] - [Student ID]
-- [Name] - [Student ID]
-- [Name] - [Student ID]
+- Veronika Glukhova - 251
+- Margarita Gasparova - 251
+- Diana Marzaganova - 251
+- Georgiy Kintsurashvili - 251
 
 ## 🧠 Strategy Overview
 
