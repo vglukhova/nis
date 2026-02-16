@@ -1,0 +1,314 @@
+{
+  "name": "Crypto Trading Bot - Simple Batch Fixed",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cdcbc9b4-8f9e-4cf8-8aee-9748d2489972",
+      "name": "Start Bot",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/dryjins/aib/main/2026/l4/crypto_features_3months.csv",
+        "options": {}
+      },
+      "id": "11c9d0cf-0283-4297-a918-0fed3cdaaa45",
+      "name": "1. Load Market Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/dryjins/aib/main/2026/l4/crypto_news_3months.csv",
+        "options": {}
+      },
+      "id": "24712a0e-d96a-421c-9ce4-fa26e3d88d68",
+      "name": "2. Load News Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first();\nlet text = '';\nif (typeof input.json === 'string') text = input.json;\nelse if (input.json.data) text = input.json.data;\nelse if (input.binary) text = Buffer.from(input.binary.data.data, 'base64').toString('utf-8');\n\nconst lines = text.split('\\n').filter(l => l.trim());\nconst headers = lines[0].split(',').map(h => h.trim());\n\nconst result = [];\nfor (let i = 1; i < lines.length; i++) {\n  const line = lines[i];\n  if (!line.trim()) continue;\n  const values = [];\n  let current = '';\n  let inQuotes = false;\n  for (let char of line) {\n    if (char === '\"') inQuotes = !inQuotes;\n    else if (char === ',' && !inQuotes) {\n      values.push(current.trim());\n      current = '';\n    } else current += char;\n  }\n  values.push(current.trim());\n  const obj = {};\n  headers.forEach((h, idx) => obj[h] = values[idx] || '');\n  result.push({ json: obj });\n}\nreturn result;"
+      },
+      "id": "11e03c0a-6745-4803-8263-95943088cae4",
+      "name": "Parse CSV (Market)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first();\nlet text = '';\nif (typeof input.json === 'string') text = input.json;\nelse if (input.json.data) text = input.json.data;\nelse if (input.binary) text = Buffer.from(input.binary.data.data, 'base64').toString('utf-8');\n\nconst lines = text.split('\\n').filter(l => l.trim());\nconst headers = lines[0].split(',').map(h => h.trim());\n\nconst result = [];\nfor (let i = 1; i < lines.length; i++) {\n  const line = lines[i];\n  if (!line.trim()) continue;\n  const values = [];\n  let current = '';\n  let inQuotes = false;\n  for (let char of line) {\n    if (char === '\"') inQuotes = !inQuotes;\n    else if (char === ',' && !inQuotes) {\n      values.push(current.trim());\n      current = '';\n    } else current += char;\n  }\n  values.push(current.trim());\n  const obj = {};\n  headers.forEach((h, idx) => obj[h] = values[idx] || '');\n  result.push({ json: obj });\n}\nreturn result;"
+      },
+      "id": "49f6e92f-7c9a-4179-9d60-7e6bb106f970",
+      "name": "Parse CSV (News)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const newsByDate = {};\nfor (const item of $input.all()) {\n  let d = item.json.date || (item.json.datetime ? item.json.datetime.split(' ')[0] : '');\n  if (!d) continue;\n  if (!newsByDate[d]) newsByDate[d] = [];\n  newsByDate[d].push(item.json.title);\n}\nreturn [{ json: { newsByDate } }];"
+      },
+      "id": "fc75d0a7-9a7d-4a3c-909d-2fa389ee393b",
+      "name": "Group News",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        208
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "6058d23f-8f6f-401d-bb77-bb5d12cb2048",
+      "name": "Wait for Both",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nlet newsLookup = {};\nconst marketData = [];\n\nfor (const item of allItems) {\n  if (item.json.newsByDate) newsLookup = item.json.newsByDate;\n  else if (item.json.date) marketData.push(item);\n}\n\nmarketData.sort((a, b) => new Date(a.json.date) - new Date(b.json.date));\n\nconst merged = [];\nfor (const item of marketData) {\n  let d = item.json.date.split(' ')[0];\n  const news = newsLookup[d] || [];\n  const newsText = news.length > 0 ? news.slice(0, 3).join(' | ') : \"Market is quiet today.\";\n\n  merged.push({\n    json: {\n      ...item.json,\n      news_text: newsText,\n      news_count: news.length\n    }\n  });\n}\n\nreturn merged;"
+      },
+      "id": "3073831d-05ec-40a0-a38d-99663fcc17a4",
+      "name": "3. Merge Daily Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple Batch Preparation\nconst allItems = $input.all();\nconst inputsArray = allItems.map(item => item.json.news_text);\n\n// We store original items to merge later\nreturn [{\n  json: {\n    batch_inputs: inputsArray,\n    original_items: allItems.map(i => i.json)\n  }\n}];"
+      },
+      "id": "34b449ce-5b2d-4e23-82c4-d85bbc180312",
+      "name": "4. Prepare Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://router.huggingface.co/hf-inference/models/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\"inputs\": $json.batch_inputs} }}",
+        "options": {}
+      },
+      "id": "2b2855be-6aa3-4c6f-b1ff-974f0d7ed795",
+      "name": "5. HF Sentiment (Single Batch)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        16
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "5FYBTv3xmbCtrQ64",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nlet apiResponse = item.json.data || item.json;\nconst prepareNode = $(\"4. Prepare Batch\").first();\nconst originalItems = prepareNode.json.original_items; \nif (!originalItems) throw new Error(\"Missing original_items\");\n\nlet sentiments = apiResponse;\nif (Array.isArray(apiResponse) && Array.isArray(apiResponse[0])) sentiments = apiResponse;\nelse if (!Array.isArray(apiResponse)) sentiments = [apiResponse];\n\nconst tickers = [...new Set(originalItems.map(i => i.ticker))]; \nconst initialCapitalPerTicker = 10000 / tickers.length; \nconst portfolio = {};\n\ntickers.forEach(t => {\n    portfolio[t] = { \n        balance: initialCapitalPerTicker, \n        coin: 0, \n        inPosition: false, \n        entryPrice: 0,\n        entryDay: 0,\n        lastEquity: initialCapitalPerTicker,\n        priceHistory: []\n    };\n});\n\nconst trades = [];\nlet totalTrades = 0, winningTrades = 0, totalProfit = 0, totalLoss = 0;\nconst loopCount = Math.min(originalItems.length, sentiments.length);\n\nfor (let i = 0; i < loopCount; i++) {\n    const d = originalItems[i];\n    const s = sentiments[i];\n    const ticker = d.ticker;\n    const price = parseFloat(d.price || d.close);\n    const wallet = portfolio[ticker];\n    if (!wallet) continue;\n\n    wallet.priceHistory.push(price);\n    if (wallet.priceHistory.length > 20) wallet.priceHistory.shift();\n\n    let best = { score: 0, label: 'NEUTRAL' };\n    if (Array.isArray(s)) best = s.reduce((p, c) => (c.score > p.score ? c : p), {score: 0});\n    else if (s && s.label) best = s;\n    const sentimentLabel = best.label || 'NEUTRAL';\n    const sentimentScore = best.score || 0;\n\n    const rsi = parseFloat(d.rsi) || 50;\n    \n    let macdSignal = 0;\n    if (wallet.priceHistory.length >= 12) {\n        const ema12 = wallet.priceHistory.slice(-12).reduce((a, b) => a + b, 0) / 12;\n        const ema26 = wallet.priceHistory.reduce((a, b) => a + b, 0) / wallet.priceHistory.length;\n        macdSignal = ema12 > ema26 ? 1 : -1;\n    }\n\n    let bbPosition = 0.5;\n    if (wallet.priceHistory.length >= 20) {\n        const sma = wallet.priceHistory.reduce((a, b) => a + b, 0) / wallet.priceHistory.length;\n        const std = Math.sqrt(wallet.priceHistory.map(p => Math.pow(p - sma, 2)).reduce((a, b) => a + b, 0) / wallet.priceHistory.length);\n        const lower = sma - 2 * std;\n        const upper = sma + 2 * std;\n        bbPosition = (price - lower) / (upper - lower);\n    }\n\n    let volumeSignal = 0;\n    if (i > 0) {\n        const prevItem = originalItems[i-1];\n        if (prevItem && prevItem.ticker === ticker) {\n            const prevPrice = parseFloat(prevItem.price || prevItem.close);\n            volumeSignal = price > prevPrice ? 1 : -1;\n        }\n    }\n\n    let trendSignal = 0;\n    if (wallet.priceHistory.length >= 10) {\n        const sma5 = wallet.priceHistory.slice(-5).reduce((a, b) => a + b, 0) / 5;\n        const sma10 = wallet.priceHistory.slice(-10).reduce((a, b) => a + b, 0) / 10;\n        trendSignal = sma5 > sma10 ? 1 : -1;\n    }\n\n    let score = 0;\n    if (sentimentLabel === 'POSITIVE') score += Math.floor(sentimentScore * 12);\n    if (sentimentLabel === 'NEGATIVE') score -= Math.floor(sentimentScore * 12);\n    if (rsi < 38) score += 6;\n    if (rsi > 68) score -= 6;\n    if (macdSignal > 0) score += 4;\n    if (bbPosition < 0.25) score += 5;\n    if (bbPosition > 0.75) score -= 5;\n    if (volumeSignal > 0) score += 4;\n    if (trendSignal > 0) score += 5;\n    if (trendSignal < 0) score -= 3;\n\n    const currentPnlPct = wallet.inPosition && wallet.entryPrice > 0\n        ? (price - wallet.entryPrice) / wallet.entryPrice : 0;\n    \n    const daysInPosition = wallet.inPosition ? i - wallet.entryDay : 0;\n\n    let decision = 'hold';\n    let reason = '';\n\n    if (wallet.inPosition) {\n        if (currentPnlPct >= 0.15) {\n            decision = 'sell'; reason = 'TP15';\n        } else if (currentPnlPct <= -0.05) {\n            decision = 'sell'; reason = 'SL5';\n        } else if (sentimentLabel === 'NEGATIVE' && sentimentScore > 0.65) {\n            decision = 'sell'; reason = 'NEG65';\n        } else if (rsi > 70) {\n            decision = 'sell'; reason = 'RSI70';\n        } else if (price < wallet.entryPrice * 0.94) {\n            decision = 'sell'; reason = 'MA6';\n        } else if (daysInPosition >= 6) {\n            decision = 'sell'; reason = 'MAX6';\n        } else {\n            decision = 'hold';\n            reason = `HOLD${daysInPosition}`;\n        }\n    } else {\n        if (score >= 22 && volumeSignal > 0) {\n            decision = 'buy'; reason = `S${score}`;\n        } else if (sentimentLabel === 'POSITIVE' && sentimentScore > 0.8 && rsi < 40) {\n            decision = 'buy'; reason = 'P80R40';\n        } else if (score >= 15 && rsi < 35 && sentimentLabel !== 'NEGATIVE') {\n            decision = 'buy'; reason = `S15R35`;\n        } else {\n            decision = 'hold';\n            reason = `W${score}`;\n        }\n    }\n\n    let action = 'none', pnl = 0;\n    \n    if (decision === 'buy' && !wallet.inPosition) {\n        const positionSize = 1.0;\n        const buyAmount = wallet.balance * positionSize;\n        if (buyAmount > 10) {\n            wallet.entryPrice = price;\n            wallet.coin = buyAmount / price;\n            wallet.balance = 0;\n            wallet.inPosition = true;\n            wallet.entryDay = i;\n            action = 'buy';\n            totalTrades++;\n        }\n    } \n    else if (decision === 'sell' && wallet.inPosition) {\n        const sellValue = wallet.coin * price;\n        pnl = sellValue - (wallet.coin * wallet.entryPrice);\n        \n        if (pnl > 0) { winningTrades++; totalProfit += pnl; } \n        else { totalLoss += Math.abs(pnl); }\n        \n        wallet.balance = sellValue;\n        wallet.coin = 0;\n        wallet.inPosition = false;\n        action = 'sell';\n        totalTrades++;\n    }\n\n    const currentTickerEquity = wallet.inPosition ? (wallet.coin * price) : wallet.balance;\n    wallet.lastEquity = currentTickerEquity; \n\n    trades.push({\n        date: d.date, ticker, price: price.toFixed(2), decision, action,\n        pnl: pnl !== 0 ? pnl.toFixed(2) : '',\n        rsi: rsi.toFixed(0), sentiment: sentimentScore.toFixed(2),\n        score: score,\n        equity: currentTickerEquity.toFixed(2), reason\n    });\n}\n\nconst dateEquityMap = {};\nconst uniqueDates = [...new Set(trades.map(t => t.date))].sort();\ntrades.forEach(t => {\n    if (!dateEquityMap[t.date]) dateEquityMap[t.date] = 0;\n    dateEquityMap[t.date] += parseFloat(t.equity);\n});\nconst equityCurve = uniqueDates.map(d => dateEquityMap[d]);\n\nlet peak = -Infinity, maxDrawdown = 0;\nconst dailyReturns = [];\nfor (const eq of equityCurve) {\n    if (eq > peak) peak = eq;\n    const dd = (peak - eq) / peak;\n    if (dd > maxDrawdown) maxDrawdown = dd;\n}\nfor (let i = 1; i < equityCurve.length; i++) {\n    const ret = equityCurve[i-1] !== 0 ? (equityCurve[i] - equityCurve[i-1]) / equityCurve[i-1] : 0;\n    dailyReturns.push(ret);\n}\n\nconst avgDailyRet = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length || 0;\nconst variance = dailyReturns.reduce((a, b) => a + Math.pow(b - avgDailyRet, 2), 0) / dailyReturns.length || 0;\nconst stdDev = Math.sqrt(variance) || 0.01;\nconst sharpeRatio = (avgDailyRet / stdDev) * Math.sqrt(365);\n\nconst finalTotalEquity = equityCurve[equityCurve.length - 1] || 10000;\nconst totalReturn = ((finalTotalEquity - 10000) / 10000) * 100;\nconst winRate = totalTrades > 0 ? (winningTrades / totalTrades * 100) : 0;\nconst profitFactor = totalLoss > 0 ? totalProfit / totalLoss : (totalProfit > 0 ? 999 : 0);\n\nreturn [{\n  json: {\n    metric_summary: {\n      \"Total Trades\": totalTrades,\n      \"Win Rate\": winRate.toFixed(2) + \"%\",\n      \"Profit Factor\": profitFactor.toFixed(2),\n      \"Total Return\": totalReturn.toFixed(2) + \"%\",\n      \"Sharpe Ratio\": sharpeRatio.toFixed(2),\n      \"Max Drawdown\": \"-\" + (maxDrawdown * 100).toFixed(2) + \"%\",\n      \"Final Balance\": \"$\" + finalTotalEquity.toFixed(2)\n    },\n    trade_log: trades\n  }\n}];"
+      },
+      "id": "e7bff36c-ee64-4958-9f26-b000a83d3788",
+      "name": "6. Final Logic & Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first();\nconst trades = input.json.trade_log;\nconst summary = input.json.metric_summary;\n\nif (!trades) throw new Error(\"No trade data\");\n\nconst header = 'date,ticker,price,decision,rsi,sentiment,reason\\n';\nconst csvRows = trades.map(t => {\n  const safeReason = (t.reason || '').replace(/\"/g, \"'\");\n  return `${t.date},${t.ticker},${t.price},${t.decision},${t.rsi},${t.sentiment_label},\"${safeReason}\"`;\n}).join('\\n');\n\nconst csvContent = header + csvRows;\n\nreturn [{\n  json: {\n    summary: summary,\n    message: \"CSV Ready\"\n  },\n  binary: {\n    data: {\n      data: Buffer.from(csvContent).toString('base64'),\n      mimeType: 'text/csv',\n      fileName: 'final_results.csv'\n    }\n  }\n}];"
+      },
+      "id": "9a7d904e-78db-44aa-9188-25a685169b59",
+      "name": "7. Export CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start Bot": {
+      "main": [
+        [
+          {
+            "node": "1. Load Market Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "2. Load News Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Load Market Data": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV (Market)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Load News Data": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV (News)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV (Market)": {
+      "main": [
+        [
+          {
+            "node": "Wait for Both",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV (News)": {
+      "main": [
+        [
+          {
+            "node": "Group News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group News": {
+      "main": [
+        [
+          {
+            "node": "Wait for Both",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Wait for Both": {
+      "main": [
+        [
+          {
+            "node": "3. Merge Daily Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Merge Daily Data": {
+      "main": [
+        [
+          {
+            "node": "4. Prepare Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Prepare Batch": {
+      "main": [
+        [
+          {
+            "node": "5. HF Sentiment (Single Batch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. HF Sentiment (Single Batch)": {
+      "main": [
+        [
+          {
+            "node": "6. Final Logic & Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Final Logic & Metrics": {
+      "main": [
+        [
+          {
+            "node": "7. Export CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "54216bd2-bcde-4ba6-9481-85d607400662",
+  "meta": {
+    "instanceId": "7cdeb5f52d75a5080ea603963a1b28450445631a00e7e3295385a708beba5aa1"
+  },
+  "id": "4U2sSfTxZ8a5nKgF",
+  "tags": []
+}
