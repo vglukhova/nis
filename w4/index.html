@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MNIST Denoising Autoencoder</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-vis@latest/dist/tfjs-vis.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #f4f4f4; color: #222; padding: 16px; }
+
+  h1 { font-size: 1.3rem; margin-bottom: 12px; }
+  h2 { font-size: 1rem; margin: 10px 0 6px; }
+
+  .layout { display: flex; gap: 16px; align-items: flex-start; }
+  .sidebar { width: 300px; flex-shrink: 0; }
+  .main    { flex: 1; min-width: 0; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .card label { display: block; font-size: 0.83rem; margin: 5px 0; }
+
+  .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+  button {
+    padding: 7px 13px;
+    border: none; border-radius: 4px;
+    background: #1565C0; color: #fff;
+    font-size: 0.83rem; cursor: pointer;
+  }
+  button:hover { background: #0d47a1; }
+  button.gray  { background: #555; }
+  button.gray:hover  { background: #333; }
+  button.red   { background: #c62828; }
+  button.red:hover   { background: #b71c1c; }
+
+  .noise-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.85rem; margin: 8px 0;
+  }
+  .noise-row input { flex: 1; }
+  .noise-row span  { min-width: 32px; font-weight: bold; }
+
+  #logs {
+    background: #111; color: #8bc34a;
+    font-family: monospace; font-size: 0.78rem;
+    padding: 8px; border-radius: 4px;
+    height: 200px; overflow-y: auto;
+  }
+  #logs div { padding: 1px 0; }
+
+  /* Preview */
+  .preview-block { margin-bottom: 10px; }
+  .row-label { font-weight: bold; font-size: 0.88rem; margin-bottom: 4px; }
+  .preview-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .preview-item { text-align: center; }
+  canvas { display: block; border: 1px solid #ccc; image-rendering: pixelated; }
+  .caption { font-size: 0.72rem; color: #555; margin-top: 2px; }
+
+  .cmp-header {
+    font-size: 1rem; font-weight: bold; color: #1565C0;
+    text-align: center; margin: 12px 0 6px;
+  }
+
+  #dataStatus, #modelInfo {
+    font-size: 0.83rem; line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>🔢 MNIST CNN – Denoising Autoencoder (Max vs Avg Pooling)</h1>
+
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+
+    <!-- Step 1: Load data -->
+    <div class="card">
+      <h2>Step 1 – Load Data</h2>
+      <label>Train CSV: <input type="file" id="trainFile" accept=".csv"></label>
+      <label>Test CSV:  <input type="file" id="testFile"  accept=".csv"></label>
+      <div class="btn-row">
+        <button id="loadDataBtn">Load Data</button>
+      </div>
+      <div style="margin-top:8px;" id="dataStatus">No data loaded</div>
+    </div>
+
+    <!-- Noise -->
+    <div class="card">
+      <h2>Noise Level (σ)</h2>
+      <div class="noise-row">
+        <input type="range" id="noiseSlider" min="0.05" max="0.6" step="0.05" value="0.3">
+        <span id="noiseVal">0.30</span>
+      </div>
+    </div>
+
+    <!-- Step 2: Classifier -->
+    <div class="card">
+      <h2>Step 2 – Classifier (optional)</h2>
+      <div class="btn-row">
+        <button id="trainClassifierBtn">Train Classifier</button>
+        <button id="evaluateBtn" class="gray">Evaluate</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Autoencoder -->
+    <div class="card">
+      <h2>Step 3 – Denoising Autoencoder</h2>
+      <div class="btn-row">
+        <button id="trainAutoencoderBtn">Train Autoencoder</button>
+        <button id="testFiveBtn" class="gray">Test 5 Random</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Save / Load -->
+    <div class="card">
+      <h2>Step 4 – Save / Load</h2>
+      <div class="btn-row">
+        <button id="saveBtn" class="gray">Save Models</button>
+      </div>
+      <label style="margin-top:8px;">Model JSON:    <input type="file" id="modelJsonFile"    accept=".json"></label>
+      <label>Model Weights: <input type="file" id="modelWeightsFile" accept=".bin"></label>
+      <div class="btn-row">
+        <button id="loadModelBtn" class="gray">Load Model</button>
+      </div>
+    </div>
+
+    <!-- Misc -->
+    <div class="card">
+      <div class="btn-row">
+        <button id="toggleVisorBtn" class="gray">Toggle Visor</button>
+        <button id="resetBtn" class="red">Reset</button>
+      </div>
+      <div style="margin-top:8px;" id="modelInfo">No model</div>
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <!-- ── Main ── -->
+  <div class="main">
+
+    <div class="card">
+      <h2>Logs</h2>
+      <div id="logs"></div>
+    </div>
+
+    <div class="card">
+      <h2>Denoising Preview – 5 Random Test Images</h2>
+      <p style="font-size:0.8rem;color:#666;margin-bottom:8px;">
+        Row 1: original &nbsp;|&nbsp; Row 2: noisy input &nbsp;|&nbsp; 
+        Row 3: Max Pooling denoised &nbsp;|&nbsp; Row 4: Avg Pooling denoised
+      </p>
+      <div id="previewContainer"></div>
+    </div>
+
+  </div><!-- /main -->
+
+</div><!-- /layout -->
+
+<script src="data-loader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
