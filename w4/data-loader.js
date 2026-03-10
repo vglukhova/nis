@@ -27,14 +27,13 @@ class MNISTDataLoader {
                     }
 
                     // Normalise pixels → [0,1], shape [N,28,28,1]
-                    // clone() forces a real memory copy so dispose of intermediates is safe
                     const raw = tf.tensor2d(pixels, [labels.length, 784]);
-                    const xs  = raw.div(255).reshape([labels.length, 28, 28, 1]).clone();
+                    const xs  = raw.div(255).reshape([labels.length, 28, 28, 1]);
                     raw.dispose();
 
                     // One-hot labels
                     const lraw = tf.tensor1d(labels, 'int32');
-                    const ys   = tf.oneHot(lraw, 10).cast('float32').clone();
+                    const ys   = tf.oneHot(lraw, 10).cast('float32');
                     lraw.dispose();
 
                     resolve({ xs, ys, count: labels.length });
@@ -63,12 +62,21 @@ class MNISTDataLoader {
         const n    = xs.shape[0];
         const nVal = Math.floor(n * valRatio);
         const nTrn = n - nVal;
-        // clone() ensures each slice is an independent tensor with its own memory
+
+        // Pull everything into JS arrays once
+        const xsData = xs.arraySync();   // [N][28][28][1]
+        const ysData = ys.arraySync();   // [N][10]
+
+        const trnX = xsData.slice(0, nTrn);
+        const trnY = ysData.slice(0, nTrn);
+        const valX = xsData.slice(nTrn);
+        const valY = ysData.slice(nTrn);
+
         return {
-            trainXs: xs.slice([0,    0,0,0], [nTrn, 28,28,1]).clone(),
-            trainYs: ys.slice([0,    0],     [nTrn, 10]).clone(),
-            valXs:   xs.slice([nTrn, 0,0,0], [nVal, 28,28,1]).clone(),
-            valYs:   ys.slice([nTrn, 0],     [nVal, 10]).clone(),
+            trainXs: tf.tensor4d(trnX),
+            trainYs: tf.tensor2d(trnY),
+            valXs:   tf.tensor4d(valX),
+            valYs:   tf.tensor2d(valY),
         };
     }
 
@@ -87,12 +95,15 @@ class MNISTDataLoader {
         const n    = clean.shape[0];
         const nVal = Math.floor(n * valRatio);
         const nTrn = n - nVal;
-        // clone() gives each tensor independent GPU memory
+
+        const cData = clean.arraySync();
+        const nData = noisy.arraySync();
+
         return {
-            trnClean: clean.slice([0,    0,0,0], [nTrn, 28,28,1]).clone(),
-            trnNoisy: noisy.slice([0,    0,0,0], [nTrn, 28,28,1]).clone(),
-            valClean: clean.slice([nTrn, 0,0,0], [nVal, 28,28,1]).clone(),
-            valNoisy: noisy.slice([nTrn, 0,0,0], [nVal, 28,28,1]).clone(),
+            trnClean: tf.tensor4d(cData.slice(0, nTrn)),
+            trnNoisy: tf.tensor4d(nData.slice(0, nTrn)),
+            valClean: tf.tensor4d(cData.slice(nTrn)),
+            valNoisy: tf.tensor4d(nData.slice(nTrn)),
         };
     }
 
@@ -105,11 +116,12 @@ class MNISTDataLoader {
             const j = Math.floor(Math.random() * (i + 1));
             [idx[i], idx[j]] = [idx[j], idx[i]];
         }
-        const sel = idx.slice(0, k);
-        // tf.gather + clone() = safe independent tensors, no arraySync OOM
+        const sel    = idx.slice(0, k);
+        const xsData = xs.arraySync();
+        const ysData = ys.arraySync();
         return {
-            batchXs: tf.gather(xs, sel).clone(),
-            batchYs: tf.gather(ys, sel).clone(),
+            batchXs: tf.tensor4d(sel.map(i => xsData[i])),
+            batchYs: tf.tensor2d(sel.map(i => ysData[i])),
             indices: sel,
         };
     }
