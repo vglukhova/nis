@@ -122,71 +122,72 @@ class MNISTApp {
     // ── Autoencoders ──────────────────────────────────────────────────────────
 
     async onTrainAutoencoder() {
-        if (!this.trainData) return this.log('ERROR: Load data first.');
-        if (this.isTraining) return this.log('ERROR: Already training.');
-        this.isTraining = true;
-        try {
-            if (this.aeMax) { this.aeMax.dispose(); this.aeMax = null; }
-            if (this.aeAvg) { this.aeAvg.dispose(); this.aeAvg = null; }
+    if (!this.trainData) return this.log('ERROR: Load data first.');
+    if (this.isTraining) return this.log('ERROR: Already training.');
+    this.isTraining = true;
+    try {
+        if (this.aeMax) { this.aeMax.dispose(); this.aeMax = null; }
+        if (this.aeAvg) { this.aeAvg.dispose(); this.aeAvg = null; }
 
-            this.aeMax = this.buildAutoencoder('max');
-            this.aeAvg = this.buildAutoencoder('avg');
+        this.aeMax = this.buildAutoencoder('max');
+        this.aeAvg = this.buildAutoencoder('avg');
 
-            // Build noisy version of training data
-            this.log('Adding noise with stddev = ' + this.noiseStdfix);
-            const noisy = this.loader.addNoise(this.trainData.xs, this.noiseStddev);
+        // Build noisy version of training data
+        this.log('Adding noise with stddev = ' + this.noiseStddev); // ИСПРАВЛЕНО
+        const noisy = this.loader.addNoise(this.trainData.xs, this.noiseStddev);
 
-            // Split into train/val — INDEPENDENT tensors
-            const sp = this.loader.splitNoisyClean(this.trainData.xs, noisy, 0.1);
-            noisy.dispose(); // done with the full noisy tensor
+        // Split into train/val — INDEPENDENT tensors
+        const sp = this.loader.splitNoisyClean(this.trainData.xs, noisy, 0.1);
+        noisy.dispose(); // done with the full noisy tensor
 
-            this.log('Train samples: ' + sp.trnClean.shape[0] + ', Val samples: ' + sp.valClean.shape[0]);
+        this.log('Train samples: ' + sp.trnClean.shape[0] + ', Val samples: ' + sp.valClean.shape[0]);
 
-            const makeCb = (name) => tfvis.show.fitCallbacks(
-                { name: name, tab: 'Autoencoders' },
-                ['loss', 'val_loss'],
-                { callbacks: ['onEpochEnd'] }
-            );
+        const makeCb = (name) => tfvis.show.fitCallbacks(
+            { name: name, tab: 'Autoencoders' },
+            ['loss', 'val_loss'],
+            { callbacks: ['onEpochEnd'] }
+        );
 
-            this.log('Training Max-Pooling Autoencoder…');
-            let t = Date.now();
-            await this.aeMax.fit(sp.trnNoisy, sp.trnClean, {
-                epochs: 15, batchSize: 64,
-                validationData: [sp.valNoisy, sp.valClean],
-                shuffle: true,
-                callbacks: makeCb('AE Max Pooling')
-            });
-            this.log('Max-AE done in ' + ((Date.now()-t)/1000).toFixed(1) + 's');
+        this.log('Training Max-Pooling Autoencoder…');
+        let t = Date.now();
+        await this.aeMax.fit(sp.trnNoisy, sp.trnClean, {
+            epochs: 15, batchSize: 64,
+            validationData: [sp.valNoisy, sp.valClean],
+            shuffle: true,
+            callbacks: makeCb('AE Max Pooling')
+        });
+        this.log('Max-AE done in ' + ((Date.now()-t)/1000).toFixed(1) + 's');
 
-            this.log('Training Avg-Pooling Autoencoder…');
-            t = Date.now();
-            await this.aeAvg.fit(sp.trnNoisy, sp.trnClean, {
-                epochs: 15, batchSize: 64,
-                validationData: [sp.valNoisy, sp.valClean],
-                shuffle: true,
-                callbacks: makeCb('AE Avg Pooling')
-            });
-            this.log('Avg-AE done in ' + ((Date.now()-t)/1000).toFixed(1) + 's');
+        this.log('Training Avg-Pooling Autoencoder…');
+        t = Date.now();
+        await this.aeAvg.fit(sp.trnNoisy, sp.trnClean, {
+            epochs: 15, batchSize: 64,
+            validationData: [sp.valNoisy, sp.valClean],
+            shuffle: true,
+            callbacks: makeCb('AE Avg Pooling')
+        });
+        this.log('Avg-AE done in ' + ((Date.now()-t)/1000).toFixed(1) + 's');
 
-            // Log final validation losses
-            const evalMax = this.aeMax.evaluate(sp.valNoisy, sp.valClean);
-            const evalAvg = this.aeAvg.evaluate(sp.valNoisy, sp.valClean);
-            const maxLoss = (await evalMax.data())[0];
-            const avgLoss = (await evalAvg.data())[0];
-            this.log(`Final val_loss - Max: ${maxLoss.toFixed(6)}, Avg: ${avgLoss.toFixed(6)}`);
-            evalMax.dispose();
-            evalAvg.dispose();
+        // Log final validation losses
+        const evalMax = this.aeMax.evaluate(sp.valNoisy, sp.valClean);
+        const evalAvg = this.aeAvg.evaluate(sp.valNoisy, sp.valClean);
+        const maxLoss = (await evalMax.data())[0];
+        const avgLoss = (await evalAvg.data())[0];
+        this.log(`Final val_loss - Max: ${maxLoss.toFixed(6)}, Avg: ${avgLoss.toFixed(6)}`);
+        evalMax.dispose();
+        evalAvg.dispose();
 
-            sp.trnNoisy.dispose(); sp.trnClean.dispose();
-            sp.valNoisy.dispose(); sp.valClean.dispose();
+        sp.trnNoisy.dispose(); sp.trnClean.dispose();
+        sp.valNoisy.dispose(); sp.valClean.dispose();
 
-            this.updateModelInfo();
-            this.log('Both autoencoders trained. Click "Test 5 Random" to see results.');
-        } catch (err) {
-            this.log('ERROR: ' + err.message);
-            console.error(err);
-        } finally { this.isTraining = false; }
-    }
+        this.updateModelInfo();
+        this.log('Both autoencoders trained. Click "Test 5 Random" to see results.');
+    } catch (err) {
+        this.log('ERROR: ' + err.message);
+        console.error(err);
+    } finally { this.isTraining = false; }
+}
+
 
     // ── Test 5 Random ─────────────────────────────────────────────────────────
 
