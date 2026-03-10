@@ -27,25 +27,16 @@ class MNISTDataLoader {
                     }
 
                     // Normalise pixels → [0,1], shape [N,28,28,1]
-                    // dataSync() forces GPU execution BEFORE dispose of raw
                     const raw = tf.tensor2d(pixels, [labels.length, 784]);
-                    const divided = raw.div(255);
+                    const xs  = raw.div(255).reshape([labels.length, 28, 28, 1]);
                     raw.dispose();
-                    const xs = divided.reshape([labels.length, 28, 28, 1]);
-                    // dataSync then re-tensor to guarantee xs owns its memory
-                    const xsData = xs.dataSync();
-                    divided.dispose();
-                    const xsFinal = tf.tensor(xsData, [labels.length, 28, 28, 1], 'float32');
 
                     // One-hot labels
                     const lraw = tf.tensor1d(labels, 'int32');
-                    const ysRaw = tf.oneHot(lraw, 10).cast('float32');
+                    const ys   = tf.oneHot(lraw, 10).cast('float32');
                     lraw.dispose();
-                    const ysData = ysRaw.dataSync();
-                    ysRaw.dispose();
-                    const ys = tf.tensor(ysData, [labels.length, 10], 'float32');
 
-                    resolve({ xs: xsFinal, ys: ys, count: labels.length });
+                    resolve({ xs, ys, count: labels.length });
                 } catch (err) { reject(err); }
             };
             reader.readAsText(file);
