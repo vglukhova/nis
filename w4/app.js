@@ -124,15 +124,38 @@ class MNISTApp {
             this.aeMax = this.buildAutoencoder('max');
             this.aeAvg = this.buildAutoencoder('avg');
 
-            // Build noisy version of training data
-            this.log('Adding noise with stddev = ' + this.noiseStddev);
-            const noisy = this.loader.addNoise(this.trainData.xs, this.noiseStddev);
+            const N    = this.trainData.xs.shape[0];
+            const nVal = Math.floor(N * 0.1);
+            const nTrn = N - nVal;
 
-            // Split into train/val — INDEPENDENT tensors
-            const sp = this.loader.splitNoisyClean(this.trainData.xs, noisy, 0.1);
-            noisy.dispose(); // done with the full noisy tensor
+            // Step 1: extract clean slices - keep alive the whole time
+            const cleanTrn = this.trainData.xs.slice([0,    0,0,0], [nTrn, 28,28,1]);
+            const cleanVal = this.trainData.xs.slice([nTrn, 0,0,0], [nVal, 28,28,1]);
 
-            this.log('Train samples: ' + sp.trnClean.shape[0] + ', Val samples: ' + sp.valClean.shape[0]);
+            // Step 2: build noisy versions - keep alive the whole time
+            const noise1 = tf.randomNormal(cleanTrn.shape, 0, this.noiseStddev);
+            const noisyTrn = cleanTrn.add(noise1).clipByValue(0,1);
+            noise1.dispose();
+
+            const noise2 = tf.randomNormal(cleanVal.shape, 0, this.noiseStddev);
+            const noisyVal = cleanVal.add(noise2).clipByValue(0,1);
+            noise2.dispose();
+
+            // Diagnostic: confirm noisy != clean
+            const diff = noisyTrn.sub(cleanTrn);
+            const meanDiff = diff.abs().mean();
+            const diffVal = (await meanDiff.data())[0];
+            diff.dispose(); meanDiff.dispose();
+            this.log('Mean |noisy-clean| = ' + diffVal.toExponential(3) + ' (should be ~0.17 for stddev=0.3)');
+
+            if (diffVal < 0.001) {
+                this.log('ERROR: noisy and clean are identical — data problem!');
+                cleanTrn.dispose(); cleanVal.dispose();
+                noisyTrn.dispose(); noisyVal.dispose();
+                return;
+            }
+
+            this.log('Train: ' + nTrn + ', Val: ' + nVal + ' samples');
 
             const self = this;
             const makeCb = (name) => {
@@ -143,7 +166,7 @@ class MNISTApp {
                 );
                 const orig = cb.onEpochEnd ? cb.onEpochEnd.bind(cb) : null;
                 cb.onEpochEnd = async (epoch, logs) => {
-                    self.log(name + ' ep' + (epoch+1) + ': loss=' + logs.loss.toExponential(3) + ' val_loss=' + logs.val_loss.toExponential(3));
+                    self.log(name + ' ep'+(epoch+1)+': loss='+logs.loss.toExponential(3)+' val_loss='+logs.val_loss.toExponential(3));
                     if (orig) await orig(epoch, logs);
                 };
                 return cb;
@@ -151,9 +174,9 @@ class MNISTApp {
 
             this.log('Training Max-Pooling Autoencoder…');
             let t = Date.now();
-            await this.aeMax.fit(sp.trnNoisy, sp.trnClean, {
+            await this.aeMax.fit(noisyTrn, cleanTrn, {
                 epochs: 15, batchSize: 64,
-                validationData: [sp.valNoisy, sp.valClean],
+                validationData: [noisyVal, cleanVal],
                 shuffle: true,
                 callbacks: makeCb('AE Max Pooling')
             });
@@ -161,25 +184,17 @@ class MNISTApp {
 
             this.log('Training Avg-Pooling Autoencoder…');
             t = Date.now();
-            await this.aeAvg.fit(sp.trnNoisy, sp.trnClean, {
+            await this.aeAvg.fit(noisyTrn, cleanTrn, {
                 epochs: 15, batchSize: 64,
-                validationData: [sp.valNoisy, sp.valClean],
+                validationData: [noisyVal, cleanVal],
                 shuffle: true,
                 callbacks: makeCb('AE Avg Pooling')
             });
             this.log('Avg-AE done in ' + ((Date.now()-t)/1000).toFixed(1) + 's');
 
-            // Log final validation losses
-            const evalMax = this.aeMax.evaluate(sp.valNoisy, sp.valClean);
-            const evalAvg = this.aeAvg.evaluate(sp.valNoisy, sp.valClean);
-            const maxLoss = (await evalMax.data())[0];
-            const avgLoss = (await evalAvg.data())[0];
-            this.log(`Final val_loss - Max: ${maxLoss.toFixed(6)}, Avg: ${avgLoss.toFixed(6)}`);
-            evalMax.dispose();
-            evalAvg.dispose();
-
-            sp.trnNoisy.dispose(); sp.trnClean.dispose();
-            sp.valNoisy.dispose(); sp.valClean.dispose();
+            // Dispose ALL tensors only after training is fully done
+            cleanTrn.dispose(); cleanVal.dispose();
+            noisyTrn.dispose(); noisyVal.dispose();
 
             this.updateModelInfo();
             this.log('Both autoencoders trained. Click "Test 5 Random" to see results.');
@@ -323,40 +338,26 @@ class MNISTApp {
     }
 
     buildAutoencoder(poolType) {
-        // Encoder with max or avg pooling
-        // Decoder with dense layer - most reliable in TF.js browser
         const model = tf.sequential();
-
-        // Encoder: 28x28x1 -> 14x14x32
-        model.add(tf.layers.conv2d({
-            inputShape: [28, 28, 1], filters: 32,
-            kernelSize: 3, padding: 'same', activation: 'relu'
-        }));
+        // Encoder
+        model.add(tf.layers.conv2d({ inputShape:[28,28,1], filters:32, kernelSize:3, padding:'same', activation:'relu' }));
         if (poolType === 'max') {
-            model.add(tf.layers.maxPooling2d({ poolSize: 2 }));
+            model.add(tf.layers.maxPooling2d({ poolSize:2 }));
         } else {
-            model.add(tf.layers.averagePooling2d({ poolSize: 2 }));
+            model.add(tf.layers.averagePooling2d({ poolSize:2 }));
         }
-
-        // Encoder: 14x14x32 -> 7x7x64
-        model.add(tf.layers.conv2d({
-            filters: 64, kernelSize: 3, padding: 'same', activation: 'relu'
-        }));
+        model.add(tf.layers.conv2d({ filters:64, kernelSize:3, padding:'same', activation:'relu' }));
         if (poolType === 'max') {
-            model.add(tf.layers.maxPooling2d({ poolSize: 2 }));
+            model.add(tf.layers.maxPooling2d({ poolSize:2 }));
         } else {
-            model.add(tf.layers.averagePooling2d({ poolSize: 2 }));
+            model.add(tf.layers.averagePooling2d({ poolSize:2 }));
         }
-
-        // Flatten + dense bottleneck
-        model.add(tf.layers.flatten());          // 7*7*64 = 3136
-        model.add(tf.layers.dense({ units: 128, activation: 'relu' }));
-
-        // Decoder: dense back to full image
-        model.add(tf.layers.dense({ units: 28 * 28, activation: 'sigmoid' }));
-        model.add(tf.layers.reshape({ targetShape: [28, 28, 1] }));
-
-        model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+        // Decoder via Dense (avoids conv2dTranspose WebGL bugs)
+        model.add(tf.layers.flatten());
+        model.add(tf.layers.dense({ units:128, activation:'relu' }));
+        model.add(tf.layers.dense({ units:784, activation:'sigmoid' }));
+        model.add(tf.layers.reshape({ targetShape:[28,28,1] }));
+        model.compile({ optimizer:'adam', loss:'meanSquaredError' });
         return model;
     }
 
