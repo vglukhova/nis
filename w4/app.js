@@ -125,7 +125,7 @@ class MNISTApp {
             this.aeAvg = this.buildAutoencoder('avg');
 
             // Build noisy version of training data
-            this.log('Adding noise with stddev = ' + this.noiseStdfix);
+            this.log('Adding noise with stddev = ' + this.noiseStddev);
             const noisy = this.loader.addNoise(this.trainData.xs, this.noiseStddev);
 
             // Split into train/val — INDEPENDENT tensors
@@ -134,17 +134,17 @@ class MNISTApp {
 
             this.log('Train samples: ' + sp.trnClean.shape[0] + ', Val samples: ' + sp.valClean.shape[0]);
 
+            const self = this;
             const makeCb = (name) => {
                 const cb = tfvis.show.fitCallbacks(
                     { name: name, tab: 'Autoencoders' },
                     ['loss', 'val_loss'],
                     { callbacks: ['onEpochEnd'] }
                 );
-                const origEpochEnd = cb.onEpochEnd ? cb.onEpochEnd.bind(cb) : null;
+                const orig = cb.onEpochEnd ? cb.onEpochEnd.bind(cb) : null;
                 cb.onEpochEnd = async (epoch, logs) => {
-                    const l = logs.loss, vl = logs.val_loss;
-                    this.log(name + ' ep' + (epoch+1) + ': loss=' + l.toExponential(3) + ' val_loss=' + vl.toExponential(3));
-                    if (origEpochEnd) await origEpochEnd(epoch, logs);
+                    self.log(name + ' ep' + (epoch+1) + ': loss=' + logs.loss.toExponential(3) + ' val_loss=' + logs.val_loss.toExponential(3));
+                    if (orig) await orig(epoch, logs);
                 };
                 return cb;
             };
@@ -174,7 +174,7 @@ class MNISTApp {
             const evalAvg = this.aeAvg.evaluate(sp.valNoisy, sp.valClean);
             const maxLoss = (await evalMax.data())[0];
             const avgLoss = (await evalAvg.data())[0];
-            this.log(`Final val_loss — Max: ${maxLoss.toExponential(3)}, Avg: ${avgLoss.toExponential(3)}`);
+            this.log(`Final val_loss - Max: ${maxLoss.toFixed(6)}, Avg: ${avgLoss.toFixed(6)}`);
             evalMax.dispose();
             evalAvg.dispose();
 
@@ -323,12 +323,11 @@ class MNISTApp {
     }
 
     buildAutoencoder(poolType) {
-        // Encoder: conv2d + pooling to downsample 28->14->7
-        // Decoder: two conv2dTranspose with strides=2 to upsample 7->14->28
-        // This is the standard TF.js autoencoder pattern confirmed working
+        // Encoder with max or avg pooling
+        // Decoder with dense layer - most reliable in TF.js browser
         const model = tf.sequential();
 
-        // Encoder block 1: 28x28 -> 14x14
+        // Encoder: 28x28x1 -> 14x14x32
         model.add(tf.layers.conv2d({
             inputShape: [28, 28, 1], filters: 32,
             kernelSize: 3, padding: 'same', activation: 'relu'
@@ -339,7 +338,7 @@ class MNISTApp {
             model.add(tf.layers.averagePooling2d({ poolSize: 2 }));
         }
 
-        // Encoder block 2: 14x14 -> 7x7
+        // Encoder: 14x14x32 -> 7x7x64
         model.add(tf.layers.conv2d({
             filters: 64, kernelSize: 3, padding: 'same', activation: 'relu'
         }));
@@ -349,20 +348,13 @@ class MNISTApp {
             model.add(tf.layers.averagePooling2d({ poolSize: 2 }));
         }
 
-        // Decoder block 1: 7x7 -> 14x14
-        model.add(tf.layers.conv2dTranspose({
-            filters: 64, kernelSize: 2, strides: 2, activation: 'relu'
-        }));
+        // Flatten + dense bottleneck
+        model.add(tf.layers.flatten());          // 7*7*64 = 3136
+        model.add(tf.layers.dense({ units: 128, activation: 'relu' }));
 
-        // Decoder block 2: 14x14 -> 28x28
-        model.add(tf.layers.conv2dTranspose({
-            filters: 32, kernelSize: 2, strides: 2, activation: 'relu'
-        }));
-
-        // Output
-        model.add(tf.layers.conv2d({
-            filters: 1, kernelSize: 3, padding: 'same', activation: 'sigmoid'
-        }));
+        // Decoder: dense back to full image
+        model.add(tf.layers.dense({ units: 28 * 28, activation: 'sigmoid' }));
+        model.add(tf.layers.reshape({ targetShape: [28, 28, 1] }));
 
         model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
         return model;
